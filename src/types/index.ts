@@ -93,6 +93,8 @@ export interface RecommendOutput {
   ideaSummary: string;
   extractedKeywords: string[];
   recommendations: Recommendation[];
+  /** 일부 키워드 검색 실패 시 경고 메시지 */
+  warning?: string;
 }
 
 export interface SearchInput {

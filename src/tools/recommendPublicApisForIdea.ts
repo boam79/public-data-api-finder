@@ -63,11 +63,34 @@ export async function recommendPublicApisForIdea(
     )
   );
 
+  // 실패한 검색의 오류 메시지 수집
+  const errors = fetchResults
+    .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    .map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+
   const rawItems = fetchResults
-    .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof searchPublicDatasets>>> => r.status === "fulfilled")
+    .filter(
+      (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof searchPublicDatasets>>> =>
+        r.status === "fulfilled"
+    )
     .flatMap((r) => r.value);
 
-  logger.info("검색 결과 수집", { count: rawItems.length });
+  logger.info("검색 결과 수집", { count: rawItems.length, errors });
+
+  // 모든 검색이 실패한 경우 — 빈 결과 대신 명확한 오류를 throw
+  if (rawItems.length === 0 && errors.length > 0) {
+    const firstError = errors[0] ?? "알 수 없는 오류";
+    const isAvailability =
+      firstError.includes("타임아웃") ||
+      firstError.includes("네트워크") ||
+      firstError.includes("HTTP 5");
+
+    throw new Error(
+      isAvailability
+        ? `공공데이터포털 API 일시 불가: ${firstError}. 잠시 후 다시 시도해 주세요.`
+        : firstError
+    );
+  }
 
   // 4. 정규화 + 중복 제거
   const normalized: NormalizedDataset[] = deduplicateByTitle(
@@ -85,6 +108,9 @@ export async function recommendPublicApisForIdea(
     ideaSummary: summarize(ideaText),
     extractedKeywords: keywords,
     recommendations: ranked,
+    ...(errors.length > 0 && {
+      warning: `일부 키워드 검색 실패: ${errors.join("; ")}`,
+    }),
   };
 
   const ttl = isRealtimeQuery(ideaText) ? TTL.REALTIME : TTL.DEFAULT;

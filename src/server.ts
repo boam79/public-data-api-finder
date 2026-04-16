@@ -221,8 +221,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   } catch (err) {
     logger.error(`도구 호출 오류 [${name}]`, err);
     const message = err instanceof Error ? err.message : String(err);
+
+    // MCP 스펙: isError:true + 사람이 읽을 수 있는 오류 메시지 반환
+    // AI 어시스턴트가 오류 원인을 파악하고 사용자에게 설명할 수 있도록 상세 기술
     return {
-      content: [{ type: "text", text: `오류: ${message}` }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: true,
+              message,
+              tool: name,
+              timestamp: new Date().toISOString(),
+              hint: message.includes("일시 불가")
+                ? "공공데이터포털 API 서버가 일시적으로 응답하지 않습니다. 30초~1분 후 재시도하세요."
+                : message.includes("미신청") || message.includes("인증키")
+                ? "data.go.kr에서 공공데이터포털 검색 서비스(ID:15112888) 활용 신청 및 인증키를 확인하세요."
+                : "잠시 후 다시 시도하거나 관리자에게 문의하세요.",
+            },
+            null,
+            2
+          ),
+        },
+      ],
       isError: true,
     };
   }

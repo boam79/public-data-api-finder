@@ -19,7 +19,7 @@
 
 import type { RawSearchItem } from "../types/index.js";
 import { logger } from "../utils/logger.js";
-import { withRetry } from "../utils/retry.js";
+import { fetchWithRetry } from "../utils/retry.js";
 
 const SEARCH_URL =
   "https://api.odcloud.kr/api/GetSearchDataList/v1/searchData";
@@ -38,8 +38,8 @@ export interface SearchOptions {
   gte?: string;
   /** 수정일 이하 필터 (YYYY-MM-DD) */
   lte?: string;
-  /** 정렬 기준: "_sort"(정확도) | "reqCo"(활용순) | "inqireCo"(조회순) | "updtDt"(수정일) */
-  sort?: "_sort" | "reqCo" | "inqireCo" | "updtDt";
+  /** 정렬 기준: "_score"(정확도) | "reqCo"(활용순) | "inqireCo"(조회순) | "updtDt"(수정일) */
+  sort?: "_score" | "reqCo" | "inqireCo" | "updtDt";
   /** 정렬 방향: "desc" | "asc" */
   sortOrder?: "desc" | "asc";
 }
@@ -110,7 +110,7 @@ export async function searchPublicDatasets(
     organizations,
     gte,
     lte,
-    sort = "_sort",
+    sort = "_score",
     sortOrder = "desc",
   } = options;
 
@@ -134,14 +134,14 @@ export async function searchPublicDatasets(
 
   let res: Response;
   try {
-    res = await withRetry(
-      () =>
-        fetchFn(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(bodyPayload),
-        }),
-      { maxAttempts: 3, baseDelayMs: 400 }
+    res = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(bodyPayload),
+      },
+      { maxAttempts: 3, baseDelayMs: 500, timeoutMs: 8000, fetchFn }
     );
   } catch (err) {
     logger.error("네트워크 오류", err);

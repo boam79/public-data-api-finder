@@ -14,7 +14,7 @@
 import type { DatasetDetailOutput, ApiParameter } from "../types/index.js";
 import { MemoryCache, TTL } from "../cache/memoryCache.js";
 import { logger } from "../utils/logger.js";
-import { withRetry } from "../utils/retry.js";
+import { fetchWithRetry } from "../utils/retry.js";
 
 const detailCache = new MemoryCache<DatasetDetailOutput>(TTL.DETAIL);
 
@@ -22,10 +22,10 @@ const detailCache = new MemoryCache<DatasetDetailOutput>(TTL.DETAIL);
 async function extractSwaggerUrl(detailPageUrl: string): Promise<string | null> {
   let html: string;
   try {
-    const res = await withRetry(() =>
-      fetch(detailPageUrl, {
-        headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" },
-      })
+    const res = await fetchWithRetry(
+      detailPageUrl,
+      { headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" } },
+      { maxAttempts: 2, timeoutMs: 6000 }
     );
     if (!res.ok) return null;
     html = await res.text();
@@ -98,10 +98,10 @@ export async function getDatasetDetail(
   // 2. Swagger spec 조회
   let spec: Record<string, unknown>;
   try {
-    const res = await withRetry(() =>
-      fetch(swaggerUrl, {
-        headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
-      })
+    const res = await fetchWithRetry(
+      swaggerUrl,
+      { headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" } },
+      { maxAttempts: 2, timeoutMs: 6000 }
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     spec = (await res.json()) as Record<string, unknown>;
