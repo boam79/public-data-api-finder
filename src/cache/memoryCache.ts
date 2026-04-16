@@ -1,6 +1,9 @@
 /**
- * in-memory Map 기반 단순 TTL 캐시.
- * 동일/유사 질의에 대한 불필요한 외부 API 재호출을 방지한다.
+ * in-memory Map 기반 TTL 캐시.
+ *
+ * - 일반 쿼리: 5분 TTL
+ * - 실시간 키워드 포함 쿼리: 1분 TTL (최신 데이터 중요)
+ * - 데이터셋 상세 정보: 30분 TTL (변경 빈도 낮음)
  */
 
 interface CacheEntry<T> {
@@ -11,7 +14,7 @@ interface CacheEntry<T> {
 export class MemoryCache<T> {
   private store = new Map<string, CacheEntry<T>>();
 
-  constructor(private ttlMs: number = 5 * 60 * 1000) {}
+  constructor(private defaultTtlMs: number = 5 * 60 * 1000) {}
 
   get(key: string): T | undefined {
     const entry = this.store.get(key);
@@ -23,8 +26,12 @@ export class MemoryCache<T> {
     return entry.value;
   }
 
-  set(key: string, value: T): void {
-    this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  /** ttlMs를 지정하면 해당 항목에만 개별 TTL 적용 */
+  set(key: string, value: T, ttlMs?: number): void {
+    this.store.set(key, {
+      value,
+      expiresAt: Date.now() + (ttlMs ?? this.defaultTtlMs),
+    });
   }
 
   has(key: string): boolean {
@@ -42,6 +49,26 @@ export class MemoryCache<T> {
   size(): number {
     return this.store.size;
   }
+}
+
+// ─── TTL 프리셋 ────────────────────────────────────────────────────────────────
+
+export const TTL = {
+  REALTIME: 1 * 60 * 1000,      // 1분 — 실시간 키워드 쿼리
+  DEFAULT: 5 * 60 * 1000,       // 5분 — 일반 추천/검색
+  DETAIL: 30 * 60 * 1000,       // 30분 — 데이터셋 상세 정보
+} as const;
+
+// ─── 실시간 키워드 감지 ────────────────────────────────────────────────────────
+
+const REALTIME_TERMS = [
+  "실시간", "현재", "지금", "날씨", "교통", "버스", "지하철",
+  "공기", "미세먼지", "대기", "주가", "환율",
+];
+
+export function isRealtimeQuery(text: string): boolean {
+  const lower = text.toLowerCase();
+  return REALTIME_TERMS.some((t) => lower.includes(t));
 }
 
 /**

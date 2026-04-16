@@ -19,6 +19,7 @@
 
 import type { RawSearchItem } from "../types/index.js";
 import { logger } from "../utils/logger.js";
+import { withRetry } from "../utils/retry.js";
 
 const SEARCH_URL =
   "https://api.odcloud.kr/api/GetSearchDataList/v1/searchData";
@@ -27,8 +28,20 @@ export interface SearchOptions {
   keyword: string;
   size?: number;
   page?: number;
-  /** 기본값: ["API"] — OpenAPI형만 검색 */
+  /** 기본값: ["API"] — OpenAPI형만 검색. ["FILE","API","STD"]로 전체 검색 가능 */
   dataType?: string[];
+  /** 1차 분류체계 (예: "문화관광", "교통물류", "공공행정") */
+  brm?: string;
+  /** 제공기관 이름 (정확한 명칭) */
+  organizations?: string[];
+  /** 수정일 이상 필터 (YYYY-MM-DD) */
+  gte?: string;
+  /** 수정일 이하 필터 (YYYY-MM-DD) */
+  lte?: string;
+  /** 정렬 기준: "_sort"(정확도) | "reqCo"(활용순) | "inqireCo"(조회순) | "updtDt"(수정일) */
+  sort?: "_sort" | "reqCo" | "inqireCo" | "updtDt";
+  /** 정렬 방향: "desc" | "asc" */
+  sortOrder?: "desc" | "asc";
 }
 
 export type FetchFn = typeof fetch;
@@ -37,8 +50,12 @@ export type FetchFn = typeof fetch;
 function mapItem(item: Record<string, unknown>): RawSearchItem {
   const rawType = String(item["dataType"] ?? "");
   const provisionType = String(item["dataProvisionType"] ?? "");
-
   const isApi = rawType === "API";
+
+  const rawTags = item["keywords"];
+  const tags = Array.isArray(rawTags)
+    ? (rawTags as unknown[]).map(String)
+    : [];
 
   return {
     id: String(item["dataId"] ?? ""),
@@ -52,6 +69,9 @@ function mapItem(item: Record<string, unknown>): RawSearchItem {
     cycle: "",
     category: String(item["firstBrmName"] ?? ""),
     detailUrl: String(item["detailPageUrl"] ?? ""),
+    tags,
+    coreData: item["coreData"] === true,
+    corpApi: item["corpApi"] === true,
   };
 }
 
@@ -81,22 +101,48 @@ export async function searchPublicDatasets(
   serviceKey: string,
   fetchFn: FetchFn = fetch
 ): Promise<RawSearchItem[]> {
-  const { keyword, size = 20, page = 1, dataType = ["API"] } = options;
+  const {
+    keyword,
+    size = 20,
+    page = 1,
+    dataType = ["API"],
+    brm,
+    organizations,
+    gte,
+    lte,
+    sort = "_sort",
+    sortOrder = "desc",
+  } = options;
 
   // serviceKey는 data.go.kr에서 발급된 인코딩 키 그대로 사용 (추가 인코딩 불필요)
   const url = `${SEARCH_URL}?serviceKey=${serviceKey}`;
 
-  const bodyPayload = { keyword, page, size, dataType };
+  const bodyPayload: Record<string, unknown> = {
+    keyword,
+    page,
+    size,
+    dataType,
+    sort,
+    sortOrder,
+  };
+  if (brm) bodyPayload["brm"] = [brm];
+  if (organizations?.length) bodyPayload["organizations"] = organizations;
+  if (gte) bodyPayload["gte"] = gte;
+  if (lte) bodyPayload["lte"] = lte;
 
   logger.info("searchPublicDatasets 호출", { keyword, size, page });
 
   let res: Response;
   try {
-    res = await fetchFn(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(bodyPayload),
-    });
+    res = await withRetry(
+      () =>
+        fetchFn(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(bodyPayload),
+        }),
+      { maxAttempts: 3, baseDelayMs: 400 }
+    );
   } catch (err) {
     logger.error("네트워크 오류", err);
     throw new Error(`공공데이터 검색 네트워크 오류: ${String(err)}`);

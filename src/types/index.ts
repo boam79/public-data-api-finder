@@ -1,8 +1,8 @@
 // ─── 외부 API 응답 원시 타입 ───────────────────────────────────────────────────
 
-/** 공공데이터포털 uddiGetDatasetIndex 응답 단건 */
+/** 공공데이터포털 검색 서비스(15112888) 응답 단건 */
 export interface RawSearchItem {
-  /** 데이터셋 식별자 (UUID or id 문자열) */
+  /** 데이터셋 식별자 */
   id?: string;
   /** 데이터셋 제목 */
   title?: string;
@@ -12,7 +12,7 @@ export interface RawSearchItem {
   serviceType?: string;
   /** 등록일 */
   registDt?: string;
-  /** 수정일 */
+  /** 수정일 (YYYY-MM-DD) */
   lastUpdtDt?: string;
   /** 설명 */
   description?: string;
@@ -20,10 +20,16 @@ export interface RawSearchItem {
   detailUrl?: string;
   /** 업데이트 주기 */
   cycle?: string;
-  /** 분류 */
+  /** 1차 분류체계 */
   category?: string;
-  /** API 유형 (REST/SOAP) */
+  /** API 제공 유형 (REST/SOAP/LINK) */
   apiType?: string;
+  /** 키워드 태그 배열 */
+  tags?: string[];
+  /** 국가중점데이터 여부 */
+  coreData?: boolean;
+  /** 기업전용 API 여부 */
+  corpApi?: boolean;
 }
 
 /** 목록조회 API 응답 전체 래퍼 */
@@ -48,7 +54,15 @@ export interface NormalizedDataset {
   type: DatasetType;
   description: string;
   updateCycle: string;
+  /** 수정일 (YYYY-MM-DD, 점수화 최신성 계산용) */
+  lastUpdated: string;
   detailUrl: string;
+  /** 포털이 부여한 키워드 태그 */
+  tags: string[];
+  /** 국가중점데이터 여부 */
+  coreData: boolean;
+  /** 기업전용 API 여부 */
+  corpApi: boolean;
   /** 점수화에 활용될 raw 원본 보존 */
   _raw: RawSearchItem;
 }
@@ -85,6 +99,17 @@ export interface SearchInput {
   query: string;
   page?: number;
   limit?: number;
+  /** 데이터 타입 필터 (기본: ["API"]) */
+  dataType?: string[];
+  /** 1차 분류체계 필터 (예: "문화관광", "교통물류") */
+  brm?: string;
+  /** 수정일 이후 필터 (YYYY-MM-DD) */
+  updatedAfter?: string;
+}
+
+export interface DatasetDetailInput {
+  /** data.go.kr 데이터셋 상세 URL 또는 데이터 ID */
+  detailUrl: string;
 }
 
 export interface SearchOutput {
@@ -113,4 +138,29 @@ export interface ScoreContext {
   keywords: string[];
   apiOnly: boolean;
   realtimePreferred: boolean;
+  /** 기업전용 API 제외 여부 (기본: true) */
+  excludeCorpApi?: boolean;
+}
+
+export interface ApiParameter {
+  name: string;
+  in: "query" | "body" | "path" | "header";
+  required: boolean;
+  type: string;
+  description: string;
+}
+
+export interface DatasetDetailOutput {
+  title: string;
+  provider: string;
+  baseUrl: string;
+  endpoints: {
+    method: string;
+    path: string;
+    summary: string;
+    parameters: ApiParameter[];
+  }[];
+  authMethod: string;
+  swaggerUrl: string;
+  detailPageUrl: string;
 }

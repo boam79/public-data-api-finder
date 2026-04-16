@@ -12,7 +12,7 @@ import { extractKeywords } from "../parsers/extractKeywords.js";
 import { searchPublicDatasets, getServiceKey } from "../services/publicDataSearchService.js";
 import { normalizeDatasets, deduplicateByTitle } from "../parsers/normalizeDataset.js";
 import { scoreAndRank } from "../ranking/scoreDataset.js";
-import { MemoryCache, normalizeCacheKey } from "../cache/memoryCache.js";
+import { MemoryCache, normalizeCacheKey, isRealtimeQuery, TTL } from "../cache/memoryCache.js";
 import { logger } from "../utils/logger.js";
 
 const resultCache = new MemoryCache<RecommendOutput>(5 * 60 * 1000);
@@ -87,6 +87,7 @@ export async function recommendPublicApisForIdea(
     recommendations: ranked,
   };
 
-  resultCache.set(cacheKey, output);
+  const ttl = isRealtimeQuery(ideaText) ? TTL.REALTIME : TTL.DEFAULT;
+  resultCache.set(cacheKey, output, ttl);
   return output;
 }

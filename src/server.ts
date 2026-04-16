@@ -16,6 +16,7 @@ import { z } from "zod";
 import { recommendPublicApisForIdea } from "./tools/recommendPublicApisForIdea.js";
 import { searchPublicDatasetsForTool } from "./tools/searchPublicDatasets.js";
 import { refineRecommendations } from "./tools/refineRecommendations.js";
+import { getDatasetDetail } from "./tools/getDatasetDetail.js";
 import type { RefineInput, RecommendInput, SearchInput } from "./types/index.js";
 import { logger } from "./utils/logger.js";
 
@@ -33,6 +34,10 @@ const SearchInputSchema = z.object({
   query: z.string().min(1),
   page: z.number().int().min(1).optional(),
   limit: z.number().int().min(1).max(50).optional(),
+});
+
+const DatasetDetailInputSchema = z.object({
+  detailUrl: z.string().url("유효한 URL을 입력하세요"),
 });
 
 const RefineInputSchema = z.object({
@@ -125,6 +130,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "get_dataset_detail",
+      description:
+        "공공데이터셋의 상세 API 명세를 조회합니다. 실제 호출 URL, 필수 파라미터, 인증 방법을 반환하여 즉시 API를 사용할 수 있게 합니다.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          detailUrl: {
+            type: "string",
+            description:
+              "data.go.kr 데이터셋 상세 페이지 URL (예: https://www.data.go.kr/data/15006969/openapi.do)",
+          },
+        },
+        required: ["detailUrl"],
+      },
+    },
+    {
       name: "refine_recommendations",
       description:
         "이전 추천 결과를 재검색 없이 조건에 맞게 재필터링/재정렬합니다. 토큰과 API 호출을 절약합니다.",
@@ -172,6 +193,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "search_public_datasets") {
       const input = SearchInputSchema.parse(args) as SearchInput;
       const result = await searchPublicDatasetsForTool(input);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+
+    if (name === "get_dataset_detail") {
+      const { detailUrl } = DatasetDetailInputSchema.parse(args);
+      const result = await getDatasetDetail(detailUrl);
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };

@@ -10,7 +10,11 @@ function makeDataset(overrides: Partial<NormalizedDataset>): NormalizedDataset {
     type: "UNKNOWN",
     description: "",
     updateCycle: "미확인",
+    lastUpdated: "2025-01-01",
     detailUrl: "https://example.com",
+    tags: [],
+    coreData: false,
+    corpApi: false,
     _raw: {},
     ...overrides,
   };

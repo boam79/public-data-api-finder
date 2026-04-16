@@ -49,7 +49,11 @@ export function normalizeDataset(raw: RawSearchItem): NormalizedDataset {
     type: resolveType(raw),
     description: (raw.description ?? "").trim(),
     updateCycle: resolveUpdateCycle(raw),
+    lastUpdated: raw.lastUpdtDt ?? "",
     detailUrl: resolveDetailUrl(raw),
+    tags: raw.tags ?? [],
+    coreData: raw.coreData ?? false,
+    corpApi: raw.corpApi ?? false,
     _raw: raw,
   };
 }
