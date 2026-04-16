@@ -20,7 +20,7 @@ export async function searchPublicDatasetsForTool(
 
   const serviceKey = getServiceKey();
   const rawItems = await callSearchApi(
-    { keyword: query, perPage: limit, page },
+    { keyword: query, size: limit, page },
     serviceKey
   );
 
