@@ -59,7 +59,7 @@ export async function recommendPublicApisForIdea(
   const serviceKey = getServiceKey();
   const fetchResults = await Promise.allSettled(
     searchQueries.map((kw) =>
-      searchPublicDatasets({ keyword: kw, numOfRows: 10 }, serviceKey)
+      searchPublicDatasets({ keyword: kw, perPage: 10 }, serviceKey)
     )
   );
 
