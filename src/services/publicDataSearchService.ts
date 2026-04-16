@@ -28,7 +28,7 @@ export interface SearchOptions {
   keyword: string;
   size?: number;
   page?: number;
-  /** 기본값: ["API"] — OpenAPI형만 검색. ["FILE","API","STD"]로 전체 검색 가능 */
+  /** 기본값: ["FILE","API","STD"] — 전체 타입 검색. 점수화 단계에서 API형 우대 */
   dataType?: string[];
   /** 1차 분류체계 (예: "문화관광", "교통물류", "공공행정") */
   brm?: string;
@@ -105,7 +105,7 @@ export async function searchPublicDatasets(
     keyword,
     size = 20,
     page = 1,
-    dataType = ["API"],
+    dataType = ["FILE", "API", "STD"],
     brm,
     organizations,
     gte,

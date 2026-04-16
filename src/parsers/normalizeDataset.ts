@@ -22,6 +22,9 @@ function resolveType(raw: RawSearchItem): DatasetType {
   if (st.includes("파일") || st.includes("file")) {
     return "FILE";
   }
+  if (st.includes("표준") || st.includes("std")) {
+    return "STD";
+  }
   return "UNKNOWN";
 }
 

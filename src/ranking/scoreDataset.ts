@@ -3,12 +3,16 @@
  *
  * 점수 구성 (총 100점 기준):
  *   도메인 적합도   40점  - 제목/설명/태그에 검색 키워드 포함 여부
- *   API 형 여부     20점  - OpenAPI형 데이터 우대
+ *   데이터 형태     20점  - API(20) > STD(10) > FILE(5) > UNKNOWN(3)
  *   업데이트 주기   10점  - 실시간/일별 데이터 우대
  *   최신성          10점  - 최근 수정일 우대 (최근 1년 만점)
  *   지역성          10점  - 지역 관련 요청 시 지역 데이터 우대
  *   설명 품질        5점  - 설명 길이/풍부도
  *   국가중점데이터   5점  - coreData === true 가산점
+ *
+ * 데이터 타입 점수:
+ *   API=20, STD=10, FILE=5, UNKNOWN=3
+ *   apiOnly=true 시 API 외 타입은 제거됨
  *
  * 패널티:
  *   기업전용(corpApi) API는 ctx.excludeCorpApi가 true(기본)일 때 필터 제외
@@ -152,7 +156,8 @@ export function scoreAndRank(
       let score = 0;
 
       score += domainScore(d, keywords);          // 최대 40
-      score += d.type === "API" ? 20 : (d.type === "UNKNOWN" ? 3 : 0); // 최대 20
+      // API(20) > STD(10) > FILE(5) > UNKNOWN(3) — 전체 검색 후 타입별 우대
+      score += d.type === "API" ? 20 : d.type === "STD" ? 10 : d.type === "FILE" ? 5 : 3;
       score += cycleScore(d.updateCycle);          // 최대 10
       score += recencyScore(d.lastUpdated);        // 최대 10
       score += regionScore(d, keywords);           // 최대 10

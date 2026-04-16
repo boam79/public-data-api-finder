@@ -44,7 +44,7 @@ export interface RawSearchResponse {
 
 // ─── 정규화된 내부 타입 ────────────────────────────────────────────────────────
 
-export type DatasetType = "API" | "FILE" | "UNKNOWN";
+export type DatasetType = "API" | "FILE" | "STD" | "UNKNOWN";
 
 /** 내부에서 사용하는 정규화된 데이터셋 */
 export interface NormalizedDataset {

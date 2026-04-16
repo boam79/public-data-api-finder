@@ -22,6 +22,46 @@ function summarize(text: string): string {
   return text.length > 30 ? text.slice(0, 30) + "..." : text;
 }
 
+// ─── 기관명 별칭 → 공식명 매핑 ────────────────────────────────────────────────
+// 사용자가 약칭으로 언급한 기관을 공식 이름으로 변환해 organizations 필터에 활용
+
+const ORG_ALIASES: Record<string, string> = {
+  심평원: "건강보험심사평가원",
+  건보공단: "국민건강보험공단",
+  건강보험공단: "국민건강보험공단",
+  국토부: "국토교통부",
+  교육부: "교육부",
+  복지부: "보건복지부",
+  보건복지부: "보건복지부",
+  환경부: "환경부",
+  행안부: "행정안전부",
+  농식품부: "농림축산식품부",
+  농림부: "농림축산식품부",
+  통계청: "통계청",
+  기상청: "기상청",
+  경찰청: "경찰청",
+  소방청: "소방청",
+  문체부: "문화체육관광부",
+  고용부: "고용노동부",
+  과기부: "과학기술정보통신부",
+  중기부: "중소벤처기업부",
+  금융위: "금융위원회",
+  금융감독원: "금융감독원",
+  건보: "국민건강보험공단",
+};
+
+/** 아이디어 텍스트에서 감지된 기관명 공식명 반환 */
+function detectOrganizations(text: string): string[] {
+  const found = new Set<string>();
+  const lower = text.toLowerCase();
+  for (const [alias, official] of Object.entries(ORG_ALIASES)) {
+    if (lower.includes(alias) || text.includes(alias)) {
+      found.add(official);
+    }
+  }
+  return [...found];
+}
+
 export async function recommendPublicApisForIdea(
   input: RecommendInput
 ): Promise<RecommendOutput> {
@@ -49,19 +89,35 @@ export async function recommendPublicApisForIdea(
 
   logger.info("추출된 키워드", { keywords, effectiveRealtime });
 
-  // 2. 검색 쿼리 생성 — 키워드를 최대 3개 조합
-  const searchQueries = keywords.slice(0, 3);
+  // 2. 검색 쿼리 구성
+  //    - 키워드 최대 5개 (기존 3개에서 확장)
+  //    - 기관명 감지 시 organizations 필터로 별도 검색 추가
+  const searchQueries = keywords.slice(0, 5);
   if (searchQueries.length === 0) {
     searchQueries.push(ideaText.slice(0, 20));
   }
 
-  // 3. 검색 API 호출 (키워드별 병렬 호출)
+  const detectedOrgs = detectOrganizations(ideaText + " " + (domainHint ?? ""));
+  logger.info("감지된 기관명", { detectedOrgs });
+
+  // 3. 검색 API 병렬 호출
   const serviceKey = getServiceKey();
-  const fetchResults = await Promise.allSettled(
-    searchQueries.map((kw) =>
-      searchPublicDatasets({ keyword: kw, size: 10 }, serviceKey)
-    )
-  );
+
+  const searches = [
+    // 키워드별 일반 검색 (FILE+API+STD 전체)
+    ...searchQueries.map((kw) =>
+      searchPublicDatasets({ keyword: kw, size: 20 }, serviceKey)
+    ),
+    // 기관명 감지 시 organization 필터 검색 추가
+    ...detectedOrgs.map((org) =>
+      searchPublicDatasets(
+        { keyword: keywords[0] ?? "", size: 20, organizations: [org] },
+        serviceKey
+      )
+    ),
+  ];
+
+  const fetchResults = await Promise.allSettled(searches);
 
   // 실패한 검색의 오류 메시지 수집
   const errors = fetchResults
