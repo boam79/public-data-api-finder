@@ -1,71 +1,82 @@
 /**
- * get_dataset_detail — 데이터셋 상세 API 명세 조회 도구.
+ * get_dataset_detail — 데이터셋 상세 메타데이터 조회 도구.
  *
- * data.go.kr 상세 페이지에서 Swagger spec URL을 추출한 뒤
- * spec을 파싱해 실제 호출 엔드포인트·파라미터·인증 방법을 반환한다.
+ * data.go.kr은 SPA(JavaScript 렌더링) 구조이므로 Swagger 스펙을 서버사이드에서
+ * 직접 파싱할 수 없다. 대신 공개된 Schema.org 카탈로그 엔드포인트를 활용한다.
  *
  * 흐름:
  *   detailUrl (data.go.kr/data/{id}/openapi.do)
- *     → HTML에서 infuser.odcloud.kr/api/stages/{stageId}/api-docs 추출
- *     → Swagger JSON 파싱
- *     → DatasetDetailOutput 반환
+ *     → publicDataPk 추출
+ *     → https://www.data.go.kr/catalog/{id}/openapi.json 조회
+ *     → DatasetDetailOutput 반환 (메타데이터 + 상세페이지 링크)
  */
 
-import type { DatasetDetailOutput, ApiParameter } from "../types/index.js";
+import type { DatasetDetailOutput } from "../types/index.js";
 import { MemoryCache, TTL } from "../cache/memoryCache.js";
 import { logger } from "../utils/logger.js";
 import { fetchWithRetry } from "../utils/retry.js";
 
 const detailCache = new MemoryCache<DatasetDetailOutput>(TTL.DETAIL);
 
-/** data.go.kr HTML에서 Swagger spec URL을 추출 */
-async function extractSwaggerUrl(detailPageUrl: string): Promise<string | null> {
-  let html: string;
-  try {
-    const res = await fetchWithRetry(
-      detailPageUrl,
-      { headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" } },
-      { maxAttempts: 2, timeoutMs: 6000 }
-    );
-    if (!res.ok) return null;
-    html = await res.text();
-  } catch {
-    return null;
-  }
+const PORTAL_BASE = "https://www.data.go.kr";
 
-  const match = html.match(
-    /https:\/\/infuser\.odcloud\.kr\/api\/stages\/(\d+)\/api-docs/
-  );
-  return match ? match[0] : null;
+/** detailUrl에서 publicDataPk 추출 */
+function extractPublicDataPk(detailUrl: string): string | null {
+  const m = detailUrl.match(/\/data\/(\d+)\//);
+  return m ? m[1] : null;
 }
 
-/** Swagger JSON에서 인증 방법 문자열 생성 */
-function resolveAuthMethod(spec: Record<string, unknown>): string {
-  const defs = spec["securityDefinitions"] as Record<string, unknown> | undefined;
-  if (!defs) return "없음 (공개 API)";
+/** Schema.org 카탈로그 JSON → DatasetDetailOutput 변환 */
+function catalogToOutput(
+  catalog: Record<string, unknown>,
+  detailUrl: string,
+  pk: string
+): DatasetDetailOutput {
+  const creator = (catalog["creator"] as Record<string, unknown>) ?? {};
+  const contact = (creator["contactPoint"] as Record<string, unknown>) ?? {};
 
-  const methods: string[] = [];
-  for (const [name, def] of Object.entries(defs)) {
-    const d = def as Record<string, unknown>;
-    if (d["in"] === "header" && d["name"]) {
-      methods.push(`헤더: ${d["name"]} (예: Infuser {인증키})`);
-    } else if (d["in"] === "query" && d["name"]) {
-      methods.push(`쿼리 파라미터: ${d["name"]}`);
-    } else {
-      methods.push(name);
-    }
-  }
-  return methods.join(", ") || "없음";
-}
+  const provider = [
+    String(creator["name"] ?? ""),
+    String(contact["contactType"] ?? ""),
+    String(contact["telephone"] ?? ""),
+  ]
+    .filter(Boolean)
+    .join(" / ");
 
-/** Swagger parameter → ApiParameter 매핑 */
-function mapParam(p: Record<string, unknown>): ApiParameter {
+  const keywords = String(catalog["keywords"] ?? "")
+    .split(/[,，]/)
+    .map((k) => k.trim())
+    .filter(Boolean);
+
+  const encodingFormat = String(catalog["encodingFormat"] ?? "");
+  const datasetTimeInterval = String(catalog["datasetTimeInterval"] ?? "");
+  const license = String(catalog["license"] ?? "");
+  const dateModified = String(catalog["dateModified"] ?? "");
+
+  // API 명세는 브라우저를 통해서만 접근 가능하므로 링크 안내
+  const oasViewerUrl = `${PORTAL_BASE}/data/${pk}/openapi.do`;
+
   return {
-    name: String(p["name"] ?? ""),
-    in: (p["in"] as ApiParameter["in"]) ?? "query",
-    required: p["required"] === true,
-    type: String(p["type"] ?? p["schema"] ? "object" : "string"),
-    description: String(p["description"] ?? ""),
+    title: String(catalog["name"] ?? ""),
+    provider,
+    // 실제 API base URL은 JS 렌더링 없이 알 수 없어 빈 문자열
+    baseUrl: "",
+    endpoints: [],
+    authMethod:
+      "공공데이터포털 인증키(serviceKey) — 활용 신청 후 data.go.kr 마이페이지에서 발급",
+    swaggerUrl: oasViewerUrl,
+    detailPageUrl: detailUrl,
+    // 추가 메타데이터를 note로 제공
+    note: [
+      `응답 형식: ${encodingFormat || "정보 없음"}`,
+      `업데이트 주기: ${datasetTimeInterval || "정보 없음"}`,
+      `라이선스: ${license || "정보 없음"}`,
+      `최근 수정일: ${dateModified || "정보 없음"}`,
+      keywords.length > 0 ? `태그: ${keywords.join(", ")}` : "",
+      `API 명세 확인: ${oasViewerUrl} (브라우저 접속 후 Swagger UI 탭)`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
   };
 }
 
@@ -81,73 +92,79 @@ export async function getDatasetDetail(
 
   logger.info("데이터셋 상세 조회", { detailUrl });
 
-  // 1. HTML에서 Swagger spec URL 추출
-  const swaggerUrl = await extractSwaggerUrl(detailUrl);
-  if (!swaggerUrl) {
-    return {
-      title: "상세 정보를 가져올 수 없습니다",
-      provider: "",
-      baseUrl: "",
-      endpoints: [],
-      authMethod: "알 수 없음",
-      swaggerUrl: "",
-      detailPageUrl: detailUrl,
-    };
+  // detailUrl에서 publicDataPk 추출
+  const pk = extractPublicDataPk(detailUrl);
+  if (!pk) {
+    return buildNotFound(detailUrl, "URL에서 데이터셋 ID를 추출할 수 없습니다.");
   }
 
-  // 2. Swagger spec 조회
-  let spec: Record<string, unknown>;
+  // Schema.org 카탈로그 엔드포인트 조회
+  const catalogUrl = `${PORTAL_BASE}/catalog/${pk}/openapi.json`;
+  logger.info("카탈로그 조회", { catalogUrl });
+
+  let catalog: Record<string, unknown>;
   try {
     const res = await fetchWithRetry(
-      swaggerUrl,
-      { headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" } },
-      { maxAttempts: 2, timeoutMs: 6000 }
+      catalogUrl,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          Referer: PORTAL_BASE + "/",
+        },
+      },
+      { maxAttempts: 2, timeoutMs: 8000 }
     );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    spec = (await res.json()) as Record<string, unknown>;
+
+    if (!res.ok) {
+      logger.warn("카탈로그 응답 비정상", { status: res.status, pk });
+      return buildNotFound(
+        detailUrl,
+        `카탈로그 조회 실패 (HTTP ${res.status}). 상세 페이지를 직접 확인하세요.`
+      );
+    }
+
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("json")) {
+      const text = await res.text();
+      if (text.includes("에러")) {
+        return buildNotFound(
+          detailUrl,
+          "데이터셋을 찾을 수 없습니다. URL을 확인하거나 data.go.kr에서 직접 검색하세요."
+        );
+      }
+    }
+
+    catalog = (await res.json()) as Record<string, unknown>;
   } catch (err) {
-    logger.error("Swagger spec 조회 실패", err);
-    return {
-      title: "API 명세를 가져올 수 없습니다",
-      provider: "",
-      baseUrl: swaggerUrl,
-      endpoints: [],
-      authMethod: "알 수 없음",
-      swaggerUrl,
-      detailPageUrl: detailUrl,
-    };
+    logger.error("카탈로그 조회 오류", err);
+    return buildNotFound(detailUrl, `네트워크 오류: ${String(err)}`);
   }
 
-  // 3. spec 파싱
-  const info = (spec["info"] as Record<string, unknown>) ?? {};
-  const host = String(spec["host"] ?? "");
-  const basePath = String(spec["basePath"] ?? "");
-  const baseUrl = host ? `https://${host}${basePath}` : basePath;
-
-  const paths = (spec["paths"] as Record<string, Record<string, unknown>>) ?? {};
-  const endpoints = Object.entries(paths).flatMap(([path, methods]) =>
-    Object.entries(methods).map(([method, opRaw]) => {
-      const op = opRaw as Record<string, unknown>;
-      const rawParams = (op["parameters"] as Record<string, unknown>[]) ?? [];
-      return {
-        method: method.toUpperCase(),
-        path,
-        summary: String(op["summary"] ?? op["description"] ?? ""),
-        parameters: rawParams.map(mapParam),
-      };
-    })
-  );
-
-  const result: DatasetDetailOutput = {
-    title: String(info["title"] ?? ""),
-    provider: String(info["contact"] ?? ""),
-    baseUrl,
-    endpoints,
-    authMethod: resolveAuthMethod(spec),
-    swaggerUrl,
-    detailPageUrl: detailUrl,
-  };
-
+  const result = catalogToOutput(catalog, detailUrl, pk);
   detailCache.set(cacheKey, result, TTL.DETAIL);
   return result;
+}
+
+function buildNotFound(detailUrl: string, reason: string): DatasetDetailOutput {
+  const pk = extractPublicDataPk(detailUrl);
+  const oasViewerUrl = pk
+    ? `${PORTAL_BASE}/data/${pk}/openapi.do`
+    : detailUrl;
+
+  return {
+    title: "상세 정보 조회 불가",
+    provider: "",
+    baseUrl: "",
+    endpoints: [],
+    authMethod: "공공데이터포털 인증키(serviceKey)",
+    swaggerUrl: oasViewerUrl,
+    detailPageUrl: detailUrl,
+    note: [
+      `사유: ${reason}`,
+      `직접 확인: ${oasViewerUrl}`,
+      "브라우저에서 위 URL을 열면 Swagger UI로 API 명세를 확인할 수 있습니다.",
+    ].join("\n"),
+  };
 }

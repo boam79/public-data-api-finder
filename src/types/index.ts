@@ -165,4 +165,6 @@ export interface DatasetDetailOutput {
   authMethod: string;
   swaggerUrl: string;
   detailPageUrl: string;
+  /** 추가 메타데이터, 안내 메시지 등 (응답 형식/주기/라이선스/수정일 등) */
+  note?: string;
 }

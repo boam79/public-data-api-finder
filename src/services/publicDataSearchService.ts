@@ -92,6 +92,17 @@ function extractItems(body: unknown): RawSearchItem[] {
 }
 
 /**
+ * API가 HTTP 500을 반환하는 특수문자·기호를 제거.
+ * K-Startup, R&D, "나라장터 입찰" 같은 복합 쿼리에서 500 방지.
+ */
+function sanitizeKeyword(raw: string): string {
+  return raw
+    .replace(/[&<>'"\\|`]/g, " ") // API 오류 유발 특수문자 제거
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
  * 공공데이터포털 검색 서비스로 키워드 검색
  *
  * serviceKey는 URL 쿼리 파라미터로 전달 (Authorization 헤더 방식은 미지원)
@@ -102,7 +113,7 @@ export async function searchPublicDatasets(
   fetchFn: FetchFn = fetch
 ): Promise<RawSearchItem[]> {
   const {
-    keyword,
+    keyword: rawKeyword,
     size = 20,
     page = 1,
     dataType = ["FILE", "API", "STD"],
@@ -113,6 +124,9 @@ export async function searchPublicDatasets(
     sort = "_score",
     sortOrder = "desc",
   } = options;
+
+  // HTTP 500 유발 특수문자 정제 (K-Startup → K Startup, R&D → R D)
+  const keyword = sanitizeKeyword(rawKeyword);
 
   // serviceKey는 data.go.kr에서 발급된 인코딩 키 그대로 사용 (추가 인코딩 불필요)
   const url = `${SEARCH_URL}?serviceKey=${serviceKey}`;

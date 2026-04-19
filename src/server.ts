@@ -132,7 +132,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_dataset_detail",
       description:
-        "공공데이터셋의 상세 API 명세를 조회합니다. 실제 호출 URL, 필수 파라미터, 인증 방법을 반환하여 즉시 API를 사용할 수 있게 합니다.",
+        "공공데이터셋 상세 메타데이터를 조회합니다. data.go.kr의 Schema.org 카탈로그 API를 통해 데이터셋 이름, 제공기관, 응답 형식, 업데이트 주기, 라이선스, 태그, 최근 수정일을 반환합니다. " +
+        "※ data.go.kr은 SPA 구조이므로 Swagger 엔드포인트·파라미터 상세는 서버사이드에서 조회 불가합니다. " +
+        "API 명세(엔드포인트/파라미터)가 필요한 경우 반환된 swaggerUrl을 브라우저에서 직접 확인하세요.",
       inputSchema: {
         type: "object",
         properties: {

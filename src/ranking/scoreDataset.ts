@@ -146,6 +146,9 @@ export function scoreAndRank(
     excludeCorpApi = true,
   } = ctx;
 
+  // 최소 점수 임계값: 키워드와 전혀 관련 없는 결과를 제거 (100점 만점 기준)
+  const MIN_SCORE = 15;
+
   return datasets
     .filter((d) => {
       if (apiOnly && d.type !== "API") return false;
@@ -179,5 +182,6 @@ export function scoreAndRank(
         detailUrl: d.detailUrl,
       } satisfies Recommendation;
     })
+    .filter((rec) => rec.score >= MIN_SCORE) // 관련 없는 결과 제거
     .sort((a, b) => b.score - a.score);
 }
