@@ -2,13 +2,12 @@
  * get_dataset_detail — 데이터셋 상세 메타데이터 조회 도구.
  *
  * data.go.kr은 SPA(JavaScript 렌더링) 구조이므로 Swagger 스펙을 서버사이드에서
- * 직접 파싱할 수 없다. 대신 공개된 Schema.org 카탈로그 엔드포인트를 활용한다.
+ * 직접 파싱할 수 없다. 대신 공개된 Schema.org 카탈로그 엔드포인트를 사용한다.
  *
- * 흐름:
- *   detailUrl (data.go.kr/data/{id}/openapi.do)
- *     → publicDataPk 추출
- *     → https://www.data.go.kr/catalog/{id}/openapi.json 조회
- *     → DatasetDetailOutput 반환 (메타데이터 + 상세페이지 링크)
+ * URL 패턴별 카탈로그 엔드포인트:
+ *   openapi.do  → /catalog/{id}/openapi.json  (API 형)
+ *   fileData.do → /catalog/{id}/fileData.json (파일 형)
+ *   standard.do → /catalog/{id}/standard.json (표준 형)
  */
 
 import type { DatasetDetailOutput } from "../types/index.js";
@@ -20,17 +19,29 @@ const detailCache = new MemoryCache<DatasetDetailOutput>(TTL.DETAIL);
 
 const PORTAL_BASE = "https://www.data.go.kr";
 
-/** detailUrl에서 publicDataPk 추출 */
-function extractPublicDataPk(detailUrl: string): string | null {
-  const m = detailUrl.match(/\/data\/(\d+)\//);
-  return m ? m[1] : null;
+/** detailUrl에서 publicDataPk 및 타입 suffix 추출 */
+function parseDetailUrl(url: string): { pk: string; suffix: string } | null {
+  const m = url.match(/\/data\/(\d+)\/(openapi|fileData|standard)\.do/);
+  if (!m) return null;
+  return { pk: m[1], suffix: m[2] };
+}
+
+/** suffix → catalog 파일명 매핑 */
+function catalogFilename(suffix: string): string {
+  const map: Record<string, string> = {
+    openapi: "openapi.json",
+    fileData: "fileData.json",
+    standard: "standard.json",
+  };
+  return map[suffix] ?? "openapi.json";
 }
 
 /** Schema.org 카탈로그 JSON → DatasetDetailOutput 변환 */
 function catalogToOutput(
   catalog: Record<string, unknown>,
   detailUrl: string,
-  pk: string
+  pk: string,
+  suffix: string
 ): DatasetDetailOutput {
   const creator = (catalog["creator"] as Record<string, unknown>) ?? {};
   const contact = (creator["contactPoint"] as Record<string, unknown>) ?? {};
@@ -52,32 +63,68 @@ function catalogToOutput(
   const datasetTimeInterval = String(catalog["datasetTimeInterval"] ?? "");
   const license = String(catalog["license"] ?? "");
   const dateModified = String(catalog["dateModified"] ?? "");
+  const description = String(catalog["description"] ?? "");
 
-  // API 명세는 브라우저를 통해서만 접근 가능하므로 링크 안내
-  const oasViewerUrl = `${PORTAL_BASE}/data/${pk}/openapi.do`;
+  const oasViewerUrl = `${PORTAL_BASE}/data/${pk}/${suffix}.do`;
+
+  const noteLines = [
+    description ? `설명: ${description.slice(0, 200)}${description.length > 200 ? "..." : ""}` : "",
+    encodingFormat ? `응답 형식: ${encodingFormat}` : "",
+    datasetTimeInterval ? `업데이트 주기: ${datasetTimeInterval}` : "",
+    license ? `라이선스: ${license}` : "",
+    dateModified ? `최근 수정일: ${dateModified}` : "",
+    keywords.length > 0 ? `태그: ${keywords.join(", ")}` : "",
+    `API 명세 확인: ${oasViewerUrl} (브라우저 접속 후 Swagger UI 탭)`,
+  ].filter(Boolean);
 
   return {
     title: String(catalog["name"] ?? ""),
     provider,
-    // 실제 API base URL은 JS 렌더링 없이 알 수 없어 빈 문자열
     baseUrl: "",
     endpoints: [],
     authMethod:
       "공공데이터포털 인증키(serviceKey) — 활용 신청 후 data.go.kr 마이페이지에서 발급",
     swaggerUrl: oasViewerUrl,
     detailPageUrl: detailUrl,
-    // 추가 메타데이터를 note로 제공
-    note: [
-      `응답 형식: ${encodingFormat || "정보 없음"}`,
-      `업데이트 주기: ${datasetTimeInterval || "정보 없음"}`,
-      `라이선스: ${license || "정보 없음"}`,
-      `최근 수정일: ${dateModified || "정보 없음"}`,
-      keywords.length > 0 ? `태그: ${keywords.join(", ")}` : "",
-      `API 명세 확인: ${oasViewerUrl} (브라우저 접속 후 Swagger UI 탭)`,
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    note: noteLines.join("\n"),
   };
+}
+
+/** 단일 카탈로그 URL 시도 — 실패 또는 데이터 없음이면 null 반환 */
+async function fetchCatalog(
+  catalogUrl: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetchWithRetry(
+      catalogUrl,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, */*",
+          Referer: PORTAL_BASE + "/",
+        },
+      },
+      { maxAttempts: 2, timeoutMs: 8000 }
+    );
+
+    if (!res.ok) return null;
+
+    // 본문이 JSON인지 확인 후 파싱
+    const text = await res.text();
+    if (!text.trim().startsWith("{")) return null;
+
+    const json = JSON.parse(text) as Record<string, unknown>;
+
+    // "해당 데이터는 존재하지 않습니다." 같은 에러 응답 걸러내기
+    const nameStr = String(json["name"] ?? "").trim();
+    const descStr = String(json["description"] ?? "");
+    if (!nameStr && descStr.includes("존재하지 않")) return null;
+
+    return json;
+  } catch {
+    return null;
+  }
 }
 
 export async function getDatasetDetail(
@@ -92,65 +139,48 @@ export async function getDatasetDetail(
 
   logger.info("데이터셋 상세 조회", { detailUrl });
 
-  // detailUrl에서 publicDataPk 추출
-  const pk = extractPublicDataPk(detailUrl);
-  if (!pk) {
-    return buildNotFound(detailUrl, "URL에서 데이터셋 ID를 추출할 수 없습니다.");
+  // 1. URL에서 publicDataPk + suffix 추출
+  const parsed = parseDetailUrl(detailUrl);
+  if (!parsed) {
+    return buildNotFound(detailUrl, "URL 형식이 올바르지 않습니다.");
+  }
+  const { pk, suffix } = parsed;
+
+  // 2. 올바른 suffix로 카탈로그 먼저 시도, 실패 시 나머지 순서로 fallback
+  const suffixOrder = [
+    suffix,
+    ...["openapi", "fileData", "standard"].filter((s) => s !== suffix),
+  ];
+
+  let catalog: Record<string, unknown> | null = null;
+  let usedSuffix = suffix;
+
+  for (const s of suffixOrder) {
+    const catalogUrl = `${PORTAL_BASE}/catalog/${pk}/${catalogFilename(s)}`;
+    logger.info("카탈로그 조회 시도", { catalogUrl });
+    catalog = await fetchCatalog(catalogUrl);
+    if (catalog) {
+      usedSuffix = s;
+      break;
+    }
   }
 
-  // Schema.org 카탈로그 엔드포인트 조회
-  const catalogUrl = `${PORTAL_BASE}/catalog/${pk}/openapi.json`;
-  logger.info("카탈로그 조회", { catalogUrl });
-
-  let catalog: Record<string, unknown>;
-  try {
-    const res = await fetchWithRetry(
-      catalogUrl,
-      {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "application/json, text/plain, */*",
-          Referer: PORTAL_BASE + "/",
-        },
-      },
-      { maxAttempts: 2, timeoutMs: 8000 }
+  if (!catalog) {
+    return buildNotFound(
+      detailUrl,
+      "공공데이터포털에서 해당 데이터셋의 메타데이터를 가져올 수 없습니다."
     );
-
-    if (!res.ok) {
-      logger.warn("카탈로그 응답 비정상", { status: res.status, pk });
-      return buildNotFound(
-        detailUrl,
-        `카탈로그 조회 실패 (HTTP ${res.status}). 상세 페이지를 직접 확인하세요.`
-      );
-    }
-
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.includes("json")) {
-      const text = await res.text();
-      if (text.includes("에러")) {
-        return buildNotFound(
-          detailUrl,
-          "데이터셋을 찾을 수 없습니다. URL을 확인하거나 data.go.kr에서 직접 검색하세요."
-        );
-      }
-    }
-
-    catalog = (await res.json()) as Record<string, unknown>;
-  } catch (err) {
-    logger.error("카탈로그 조회 오류", err);
-    return buildNotFound(detailUrl, `네트워크 오류: ${String(err)}`);
   }
 
-  const result = catalogToOutput(catalog, detailUrl, pk);
+  const result = catalogToOutput(catalog, detailUrl, pk, usedSuffix);
   detailCache.set(cacheKey, result, TTL.DETAIL);
   return result;
 }
 
 function buildNotFound(detailUrl: string, reason: string): DatasetDetailOutput {
-  const pk = extractPublicDataPk(detailUrl);
-  const oasViewerUrl = pk
-    ? `${PORTAL_BASE}/data/${pk}/openapi.do`
+  const parsed = parseDetailUrl(detailUrl);
+  const oasViewerUrl = parsed
+    ? `${PORTAL_BASE}/data/${parsed.pk}/${parsed.suffix}.do`
     : detailUrl;
 
   return {
